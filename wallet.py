@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A small digital wallet, built up across the OOP tutorials.
 
-Version 4: Introduction to UML Modeling.
+Version 5: Introduction to Design Patterns.
 """
 import json
 from abc import ABC, abstractmethod
@@ -80,6 +80,41 @@ class JSONMixin:
         return json.dumps(self.to_dict())
 
 
+class ObservableMixin:
+    """Let observers subscribe to this object's events, by topic.
+
+    Every recorded transaction is published as an event whose topic is
+    its kind: "deposit", "withdraw", "payment", "interest" or "fee".
+    """
+
+    def subscribe(self, observer, topics=None):
+        """Send observer the events in topics, or every event if None."""
+        if not callable(getattr(observer, "notify", None)):
+            raise TypeError("observer must have a notify method")
+        if isinstance(topics, str):
+            topics = [topics]
+        wanted = None if topics is None else frozenset(topics)
+        if "_observers" not in vars(self):
+            self._observers = []
+        self._observers.append((observer, wanted))
+
+    def unsubscribe(self, observer):
+        """Stop sending events to observer."""
+        observers = vars(self).get("_observers", [])
+        observers[:] = [(o, t) for o, t in observers if o is not observer]
+
+    def _publish(self, topic, amount):
+        """Notify every observer that wants this topic."""
+        for observer, wanted in list(vars(self).get("_observers", ())):
+            if wanted is None or topic in wanted:
+                observer.notify(self, topic, amount)
+
+    def _record(self, kind, amount):
+        """Record the transaction, then publish it as an event."""
+        super()._record(kind, amount)
+        self._publish(kind, amount)
+
+
 class Payer(ABC):
     """Interface: anything that can pay an amount."""
 
@@ -88,7 +123,7 @@ class Payer(ABC):
         """Pay amount, or raise ValueError; return what is left."""
 
 
-class Account(HistoryMixin, JSONMixin, Payer):
+class Account(ObservableMixin, HistoryMixin, JSONMixin, Payer):
     """Abstract base for wallet accounts holding money, in whole lek."""
 
     currency = "ALL"
@@ -232,7 +267,7 @@ class CheckingAccount(Account):
                 f"balance={self.balance}, overdraft={self.overdraft})")
 
 
-class GiftCard(HistoryMixin, JSONMixin, Payer):
+class GiftCard(ObservableMixin, HistoryMixin, JSONMixin, Payer):
     """A prepaid card with a fixed value. It is not an account."""
 
     currency = "ALL"
@@ -270,6 +305,38 @@ class GiftCard(HistoryMixin, JSONMixin, Payer):
 
     def __repr__(self):
         return f"GiftCard(code={self._code!r}, value={self.value})"
+
+
+class AccountFactory:
+    """Create accounts by kind, from a registry of account classes."""
+
+    def __init__(self):
+        self._registry = {}
+
+    def register(self, kind, account_class):
+        """Make kind create account_class, and return account_class."""
+        if not isinstance(kind, str) or not kind.strip():
+            raise ValueError("kind must be a non-empty string")
+        if not (isinstance(account_class, type)
+                and issubclass(account_class, Account)):
+            raise TypeError("account_class must be a subclass of Account")
+        self._registry[kind] = account_class
+        return account_class
+
+    def create(self, kind, owner, **options):
+        """Create an account of a registered kind."""
+        if kind not in self._registry:
+            raise ValueError(f"unknown account kind: {kind!r}")
+        return self._registry[kind](owner, **options)
+
+    def kinds(self):
+        """The registered kinds, sorted."""
+        return sorted(self._registry)
+
+
+account_factory = AccountFactory()
+account_factory.register("savings", SavingsAccount)
+account_factory.register("checking", CheckingAccount)
 
 
 class Customer(JSONMixin):
@@ -317,6 +384,11 @@ class Customer(JSONMixin):
         self._accounts.append(account)
         return account
 
+    def open_account(self, kind, **options):
+        """Open a new account of a registered kind, and return it."""
+        account = account_factory.create(kind, self._name, **options)
+        return self.add_account(account)
+
     def add_gift_card(self, card):
         """Give this customer a gift card nobody else holds; return it."""
         if not isinstance(card, GiftCard):
@@ -345,6 +417,102 @@ class Customer(JSONMixin):
         return f"Customer(name={self.name!r}, email={self.email!r})"
 
 
+class PayerDecorator(Payer):
+    """Wrap a payer to add behaviour to pay; forward everything else."""
+
+    def __init__(self, wrapped):
+        if not callable(getattr(wrapped, "pay", None)):
+            raise TypeError("wrapped must have a pay method")
+        self._wrapped = wrapped
+
+    def pay(self, amount):
+        """Pass the payment on to the wrapped payer."""
+        return self._wrapped.pay(amount)
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+    def __str__(self):
+        return str(self._wrapped)
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self._wrapped!r})"
+
+
+class SpendingLimit(PayerDecorator):
+    """Refuse any single payment above a limit."""
+
+    def __init__(self, wrapped, limit):
+        super().__init__(wrapped)
+        _check_amount(limit)
+        self._limit = limit
+
+    def pay(self, amount):
+        """Pay amount, unless it is over the limit."""
+        if amount > self._limit:
+            raise ValueError(f"payment over the limit of {self._limit}")
+        return super().pay(amount)
+
+
+class Receipts(PayerDecorator):
+    """Keep a receipt for every payment that goes through."""
+
+    def __init__(self, wrapped):
+        super().__init__(wrapped)
+        self.receipts = []
+
+    def pay(self, amount):
+        """Pay amount, then write a receipt."""
+        result = super().pay(amount)
+        self.receipts.append(f"Paid {amount} ALL")
+        return result
+
+
+class RoundUp(PayerDecorator):
+    """Round each payment up to the next 100 and save the difference."""
+
+    def __init__(self, wrapped, savings):
+        super().__init__(wrapped)
+        if not isinstance(savings, Account):
+            raise TypeError("savings must be an Account")
+        self._savings = savings
+
+    def pay(self, amount):
+        """Pay amount, then move the round-up into savings if possible."""
+        result = super().pay(amount)
+        spare = -amount % 100
+        if spare:
+            try:
+                result = super().pay(spare)
+            except ValueError:
+                return result
+            self._savings.deposit(spare)
+        return result
+
+
+class AuditLog:
+    """Observer: keep one line for every event it is sent."""
+
+    def __init__(self):
+        self.lines = []
+
+    def notify(self, source, topic, amount):
+        """Record the event."""
+        self.lines.append(f"{type(source).__name__} {topic} {amount}")
+
+
+class SMSAlert:
+    """Observer: text a phone number about the events it is sent."""
+
+    def __init__(self, phone):
+        self.phone = phone
+        self.sent = []
+
+    def notify(self, source, topic, amount):
+        """Send a short message about the event."""
+        self.sent.append(f"To {self.phone}: {topic} of {amount} ALL")
+
+
 def checkout(payer, amount):
     """Charge amount to anything that can pay; return what it returns."""
     return payer.pay(amount)
@@ -352,15 +520,21 @@ def checkout(payer, amount):
 
 if __name__ == "__main__":
     ada = Customer("Ada", "ada@example.com")
-    savings = ada.add_account(SavingsAccount("Ada", 1000, rate=2))
-    checking = ada.add_account(CheckingAccount("Ada", overdraft=500))
-    card = ada.add_gift_card(GiftCard("HB-2026", 300))
+    savings = ada.open_account("savings", balance=1000, rate=2)
+    checking = ada.open_account("checking", overdraft=500)
 
-    checkout(checking, 300)
-    checkout(card, 120)
+    audit = AuditLog()
+    sms = SMSAlert("+355 69 000 0000")
+    for account in ada.accounts:
+        account.subscribe(audit)
+    checking.subscribe(sms, topics=["fee"])
+
+    payer = RoundUp(Receipts(SpendingLimit(checking, limit=500)), savings)
+    checkout(payer, 230)
     ada.month_end()
 
-    print(ada)
-    for item in ada.accounts + ada.gift_cards:
-        print(item)
-    print(f"Total in accounts: {ada.total_balance()} {Account.currency}")
+    for account in ada.accounts:
+        print(account)
+    print(*payer.receipts, sep="\n")
+    print(*audit.lines, sep="\n")
+    print(*sms.sent, sep="\n")

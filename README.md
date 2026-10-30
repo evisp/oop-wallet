@@ -17,7 +17,7 @@ at the end of any tutorial.
 | [`v2-inheritance`](../../tree/v2-inheritance) | [Inheritance & Polymorphism](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/inheritance/) | `SavingsAccount` and `CheckingAccount`: `super()`, overriding, polymorphism |
 | [`v3-abstract`](../../tree/v3-abstract) | [Abstract Classes & Interfaces](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/abstract-classes/) | Abstract `Account`, `Payer` interface, `GiftCard`, `TransactionLog(list)`, mixins |
 | [`v4-uml`](../../tree/v4-uml) | [Introduction to UML Modeling](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/uml/) | `Customer`, multiplicities in code, and [`DESIGN.md`](DESIGN.md) with the diagrams |
-| `v5-patterns` | Introduction to Design Patterns | Coming soon |
+| [`v5-patterns`](../../tree/v5-patterns) | [Introduction to Design Patterns](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/design-patterns/) | Factory, Observer and Decorator |
 
 ## Run it
 
