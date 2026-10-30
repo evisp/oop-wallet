@@ -15,7 +15,7 @@ at the end of any tutorial.
 |---|---|---|
 | [`v1-classes`](../../tree/v1-classes) | [Classes & Object Model](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/classes/) | The `Account` class: validation, properties, string representations |
 | [`v2-inheritance`](../../tree/v2-inheritance) | [Inheritance & Polymorphism](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/inheritance/) | `SavingsAccount` and `CheckingAccount`: `super()`, overriding, polymorphism |
-| `v3-abstract` | Abstract Classes & Interfaces | Coming soon |
+| [`v3-abstract`](../../tree/v3-abstract) | [Abstract Classes & Interfaces](https://evisp.github.io/augmented_software_engineering/02-foundations/oop/abstract-classes/) | Abstract `Account`, `Payer` interface, `GiftCard`, `TransactionLog(list)`, mixins |
 | `v4-uml` | Introduction to UML Modeling | Coming soon |
 | `v5-patterns` | Introduction to Design Patterns | Coming soon |
 

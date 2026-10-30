@@ -1,12 +1,95 @@
 #!/usr/bin/env python3
 """A small digital wallet, built up across the OOP tutorials.
 
-Version 2: Inheritance & Polymorphism.
+Version 3: Abstract Classes & Interfaces.
 """
+import json
+from abc import ABC, abstractmethod
 
 
-class Account:
-    """A wallet account holding money, in whole lek."""
+def _check_amount(amount):
+    """Raise if amount is not a positive whole number."""
+    if isinstance(amount, bool) or not isinstance(amount, int):
+        raise TypeError("amount must be an integer")
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+
+
+class TransactionLog(list):
+    """A list that only accepts (kind, amount) transaction entries."""
+
+    KINDS = ("deposit", "withdraw", "payment", "interest", "fee")
+
+    def __init__(self, entries=()):
+        super().__init__()
+        self.extend(entries)
+
+    def append(self, entry):
+        """Add one entry, after checking it."""
+        self._check(entry)
+        super().append(entry)
+
+    def extend(self, entries):
+        """Add several entries; check them all before adding any."""
+        entries = list(entries)
+        for entry in entries:
+            self._check(entry)
+        super().extend(entries)
+
+    def total(self, kind):
+        """Return the sum of all amounts of one kind."""
+        return sum(amount for k, amount in self if k == kind)
+
+    def _check(self, entry):
+        if not isinstance(entry, tuple) or len(entry) != 2:
+            raise TypeError("entry must be a (kind, amount) tuple")
+        kind, amount = entry
+        if kind not in self.KINDS:
+            raise ValueError(f"unknown kind: {kind!r}")
+        _check_amount(amount)
+
+
+class HistoryMixin:
+    """Give a class a transaction history."""
+
+    def _record(self, kind, amount):
+        """Add one entry to this object's history."""
+        if "_history" not in vars(self):
+            self._history = TransactionLog()
+        self._history.append((kind, amount))
+
+    @property
+    def history(self):
+        """A copy of the transaction history."""
+        return TransactionLog(vars(self).get("_history", ()))
+
+
+class JSONMixin:
+    """Give a class a dictionary and JSON form of its simple attributes."""
+
+    def to_dict(self):
+        """Return the type and simple attributes as a dictionary."""
+        data = {"type": type(self).__name__}
+        for name, value in vars(self).items():
+            if isinstance(value, (str, int, float, bool)):
+                data[name.lstrip("_")] = value
+        return data
+
+    def to_json(self):
+        """Return to_dict() as a JSON string."""
+        return json.dumps(self.to_dict())
+
+
+class Payer(ABC):
+    """Interface: anything that can pay an amount."""
+
+    @abstractmethod
+    def pay(self, amount):
+        """Pay amount, or raise ValueError; return what is left."""
+
+
+class Account(HistoryMixin, JSONMixin, Payer):
+    """Abstract base for wallet accounts holding money, in whole lek."""
 
     currency = "ALL"
 
@@ -18,6 +101,8 @@ class Account:
         if balance < 0:
             raise ValueError("balance must not be negative")
         self._balance = balance
+        if balance:
+            self._record("deposit", balance)
 
     @property
     def owner(self):
@@ -39,31 +124,27 @@ class Account:
 
     def deposit(self, amount):
         """Add amount to the balance and return the new balance."""
-        self._check_amount(amount)
+        _check_amount(amount)
         self._balance += amount
+        self._record("deposit", amount)
         return self._balance
 
     def withdraw(self, amount):
         """Take amount from the balance and return the new balance."""
-        self._check_amount(amount)
+        _check_amount(amount)
         if amount > self._balance:
             raise ValueError("insufficient funds")
         self._balance -= amount
+        self._record("withdraw", amount)
         return self._balance
 
-    def _check_amount(self, amount):
-        """Raise if amount is not a positive whole number."""
-        if isinstance(amount, bool) or not isinstance(amount, int):
-            raise TypeError("amount must be an integer")
-        if amount <= 0:
-            raise ValueError("amount must be positive")
+    def pay(self, amount):
+        """Pay amount from this account; return the new balance."""
+        return self.withdraw(amount)
 
+    @abstractmethod
     def month_end(self):
-        """Apply end-of-month rules and return the new balance.
-
-        A plain account has none.
-        """
-        return self._balance
+        """Apply end-of-month rules and return the new balance."""
 
     def __str__(self):
         return f"{self.owner}: {self.balance} {self.currency}"
@@ -93,7 +174,9 @@ class SavingsAccount(Account):
     def add_interest(self):
         """Add this month's interest and return the amount added."""
         interest = self._balance * self._rate // 100
-        self._balance += interest
+        if interest > 0:
+            self._balance += interest
+            self._record("interest", interest)
         return interest
 
     def month_end(self):
@@ -127,16 +210,18 @@ class CheckingAccount(Account):
 
     def withdraw(self, amount):
         """Take amount out, letting the balance go down to -overdraft."""
-        self._check_amount(amount)
+        _check_amount(amount)
         if self._balance - amount < -self._overdraft:
             raise ValueError("overdraft limit exceeded")
         self._balance -= amount
+        self._record("withdraw", amount)
         return self._balance
 
     def month_end(self):
         """Charge the monthly fee if overdrawn; return the new balance."""
         if self._balance < 0:
             self._balance -= self.fee
+            self._record("fee", self.fee)
         return self._balance
 
     def __str__(self):
@@ -147,15 +232,56 @@ class CheckingAccount(Account):
                 f"balance={self.balance}, overdraft={self.overdraft})")
 
 
+class GiftCard(HistoryMixin, JSONMixin, Payer):
+    """A prepaid card with a fixed value. It is not an account."""
+
+    currency = "ALL"
+
+    def __init__(self, code, value):
+        """Create a gift card with a code and a starting value."""
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("code must be a non-empty string")
+        _check_amount(value)
+        self._code = code.strip()
+        self._value = value
+
+    @property
+    def value(self):
+        """What is left on the card."""
+        return self._value
+
+    def pay(self, amount):
+        """Pay amount from the card; return the value left."""
+        _check_amount(amount)
+        if amount > self._value:
+            raise ValueError("not enough value on the card")
+        self._value -= amount
+        self._record("payment", amount)
+        return self._value
+
+    def __str__(self):
+        return f"Gift card {self._code}: {self.value} {self.currency}"
+
+    def __repr__(self):
+        return f"GiftCard(code={self._code!r}, value={self.value})"
+
+
+def checkout(payer, amount):
+    """Charge amount to anything that can pay; return what it returns."""
+    return payer.pay(amount)
+
+
 if __name__ == "__main__":
-    accounts = [
-        Account("Ada", 500),
-        SavingsAccount("Grace", 1000, rate=2),
-        CheckingAccount("Linus", overdraft=500),
-    ]
-    accounts[2].withdraw(300)
-    for account in accounts:
+    grace = SavingsAccount("Grace", 1000, rate=2)
+    linus = CheckingAccount("Linus", overdraft=500)
+    card = GiftCard("HB-2026", 300)
+
+    checkout(linus, 300)
+    checkout(card, 120)
+    for account in (grace, linus):
         account.month_end()
-        print(account)
-    total = sum(account.balance for account in accounts)
-    print(f"Total: {total} {Account.currency}")
+
+    for item in (grace, linus, card):
+        print(item)
+    print(linus.history)
+    print(card.to_json())
