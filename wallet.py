@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A small digital wallet, built up across the OOP tutorials.
 
-Version 3: Abstract Classes & Interfaces.
+Version 4: Introduction to UML Modeling.
 """
 import json
 from abc import ABC, abstractmethod
@@ -244,6 +244,12 @@ class GiftCard(HistoryMixin, JSONMixin, Payer):
         _check_amount(value)
         self._code = code.strip()
         self._value = value
+        self._holder = None
+
+    @property
+    def holder(self):
+        """The customer holding this card, or None."""
+        return self._holder
 
     @property
     def value(self):
@@ -266,22 +272,95 @@ class GiftCard(HistoryMixin, JSONMixin, Payer):
         return f"GiftCard(code={self._code!r}, value={self.value})"
 
 
+class Customer(JSONMixin):
+    """A wallet customer, who can hold accounts and gift cards."""
+
+    def __init__(self, name, email):
+        """Create a customer with a name and an email address."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("name must be a non-empty string")
+        if not isinstance(email, str) or "@" not in email:
+            raise ValueError("email must contain @")
+        self._name = name.strip()
+        self._email = email.strip()
+        self._accounts = []
+        self._gift_cards = []
+
+    @property
+    def name(self):
+        """The customer's name."""
+        return self._name
+
+    @property
+    def email(self):
+        """The customer's email address."""
+        return self._email
+
+    @property
+    def accounts(self):
+        """The customer's accounts, as a tuple."""
+        return tuple(self._accounts)
+
+    @property
+    def gift_cards(self):
+        """The customer's gift cards, as a tuple."""
+        return tuple(self._gift_cards)
+
+    def add_account(self, account):
+        """Add an account this customer owns, and return it."""
+        if not isinstance(account, Account):
+            raise TypeError("account must be an Account")
+        if account.owner != self._name:
+            raise ValueError("account belongs to another customer")
+        if account in self._accounts:
+            raise ValueError("account already added")
+        self._accounts.append(account)
+        return account
+
+    def add_gift_card(self, card):
+        """Give this customer a gift card nobody else holds; return it."""
+        if not isinstance(card, GiftCard):
+            raise TypeError("card must be a GiftCard")
+        if card.holder is not None:
+            raise ValueError("gift card already has a holder")
+        card._holder = self
+        self._gift_cards.append(card)
+        return card
+
+    def total_balance(self):
+        """Return the sum of all account balances."""
+        return sum(account.balance for account in self._accounts)
+
+    def month_end(self):
+        """Run the end-of-month rules on every account."""
+        for account in self._accounts:
+            account.month_end()
+
+    def __str__(self):
+        return (f"{self.name} <{self.email}>: "
+                f"accounts: {len(self._accounts)}, "
+                f"gift cards: {len(self._gift_cards)}")
+
+    def __repr__(self):
+        return f"Customer(name={self.name!r}, email={self.email!r})"
+
+
 def checkout(payer, amount):
     """Charge amount to anything that can pay; return what it returns."""
     return payer.pay(amount)
 
 
 if __name__ == "__main__":
-    grace = SavingsAccount("Grace", 1000, rate=2)
-    linus = CheckingAccount("Linus", overdraft=500)
-    card = GiftCard("HB-2026", 300)
+    ada = Customer("Ada", "ada@example.com")
+    savings = ada.add_account(SavingsAccount("Ada", 1000, rate=2))
+    checking = ada.add_account(CheckingAccount("Ada", overdraft=500))
+    card = ada.add_gift_card(GiftCard("HB-2026", 300))
 
-    checkout(linus, 300)
+    checkout(checking, 300)
     checkout(card, 120)
-    for account in (grace, linus):
-        account.month_end()
+    ada.month_end()
 
-    for item in (grace, linus, card):
+    print(ada)
+    for item in ada.accounts + ada.gift_cards:
         print(item)
-    print(linus.history)
-    print(card.to_json())
+    print(f"Total in accounts: {ada.total_balance()} {Account.currency}")
